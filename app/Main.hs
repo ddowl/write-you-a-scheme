@@ -1,9 +1,9 @@
 module Main where
 
-import SimpleParser (readExpr)
+import Evaluator (eval)
+import Parser (readExpr)
 import System.Environment (getArgs)
 
 main :: IO ()
 main = do
-  (expr : _) <- getArgs
-  putStrLn (readExpr expr)
+  getArgs >>= print . eval . readExpr . head

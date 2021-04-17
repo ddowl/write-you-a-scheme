@@ -1,4 +1,4 @@
-module SimpleParser
+module Parser
   ( symbol,
     readExpr,
   )
@@ -8,19 +8,12 @@ import Control.Monad (liftM)
 import Numeric (readHex, readOct)
 import System.Environment
 import Text.ParserCombinators.Parsec hiding (spaces)
+import Types
 
-data LispVal
-  = Atom String
-  | List [LispVal]
-  | DottedList [LispVal] LispVal
-  | Number Integer
-  | String String
-  | Bool Bool
-
-readExpr :: String -> String
+readExpr :: String -> LispVal
 readExpr input = case parse parseExpr "lisp" input of
-  Left err -> "No match: " ++ show err
-  Right val -> "Found value"
+  Left err -> String $ "No match: " ++ show err
+  Right val -> val
 
 parseList :: Parser LispVal
 parseList = List <$> sepBy parseExpr spaces
