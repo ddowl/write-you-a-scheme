@@ -5,15 +5,17 @@ module Parser
 where
 
 import Control.Monad (liftM)
+import Control.Monad.Except
+import Errors
 import Numeric (readHex, readOct)
-import System.Environment
+import System.Environment ()
 import Text.ParserCombinators.Parsec hiding (spaces)
 import Types
 
-readExpr :: String -> LispVal
+readExpr :: String -> ThrowsError LispVal
 readExpr input = case parse parseExpr "lisp" input of
-  Left err -> String $ "No match: " ++ show err
-  Right val -> val
+  Left err -> throwError $ Parser err
+  Right val -> return val
 
 parseList :: Parser LispVal
 parseList = List <$> sepBy parseExpr spaces
