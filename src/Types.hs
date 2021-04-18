@@ -7,6 +7,7 @@ data LispVal
   | Number Integer
   | String String
   | Bool Bool
+  deriving (Eq)
 
 instance Show LispVal where show = showVal
 
