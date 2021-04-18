@@ -5,25 +5,31 @@ module Evaluator where
 
 import Control.Monad.Except
 import Data.Functor ((<&>))
+import Data.IORef
+import Data.Maybe (isJust)
 import Debug.Trace (trace)
+import Env
 import Errors
 import Types
 
-eval :: LispVal -> ThrowsError LispVal
-eval val@(String _) = return val
-eval val@(Number _) = return val
-eval val@(Bool _) = return val
-eval (List [Atom "quote", val]) = return val
-eval (List [Atom "if", pred, conseq, alt]) = do
-  result <- eval pred
+eval :: Env -> LispVal -> IOThrowsError LispVal
+eval env val@(String _) = return val
+eval env val@(Number _) = return val
+eval env val@(Bool _) = return val
+eval env (Atom id) = getVar env id
+eval env (List [Atom "quote", val]) = return val
+eval env (List [Atom "if", pred, conseq, alt]) = do
+  result <- eval env pred
   case result of
-    Bool True -> eval conseq
-    Bool False -> eval alt
+    Bool True -> eval env conseq
+    Bool False -> eval env alt
     r -> throwError $ TypeMismatch "predicates must return boolean" r
-eval (List (Atom "cond" : clauses)) = cond clauses
-eval (List (Atom "case" : key : clauses)) = caseE key clauses
-eval (List (Atom func : args)) = mapM eval args >>= apply func
-eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
+eval env (List [Atom "set!", Atom var, form]) = eval env form >>= setVar env var
+eval env (List [Atom "define", Atom var, form]) = eval env form >>= defineVar env var
+eval env (List (Atom "cond" : clauses)) = cond env clauses
+eval env (List (Atom "case" : key : clauses)) = caseE env key clauses
+eval env (List (Atom func : args)) = mapM (eval env) args >>= liftThrows . apply func
+eval env badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
 apply :: String -> [LispVal] -> ThrowsError LispVal
 apply func args =
@@ -128,31 +134,31 @@ cons [x, y] = return $ DottedList [x] y
 cons badArgList = throwError $ NumArgs 2 badArgList
 
 -- https://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-7.html#%_idx_106
-cond :: [LispVal] -> ThrowsError LispVal
-cond [] = throwError $ Default "No valid cond clauses"
-cond [List (Atom "else" : expressions)] = lastExpr expressions
-cond (clause : otherClauses) = case clause of
-  (List [test]) -> eval test
+cond :: Env -> [LispVal] -> IOThrowsError LispVal
+cond env [] = throwError $ Default "No valid cond clauses"
+cond env [List (Atom "else" : expressions)] = lastExpr env expressions
+cond env (clause : otherClauses) = case clause of
+  (List [test]) -> eval env test
   val@(List [test, Atom "=>", expr]) -> throwError $ TypeMismatch "Function values aren't supported in cond" val
   (List (test : exprs)) -> do
-    result <- eval test
+    result <- eval env test
     case result of
-      Bool True -> lastExpr exprs
-      Bool False -> cond otherClauses
+      Bool True -> lastExpr env exprs
+      Bool False -> cond env otherClauses
       r -> throwError $ TypeMismatch "predicates must return boolean" r
   badClause -> throwError $ TypeMismatch "cond clause must contain a test" badClause
 
 -- https://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-7.html#%_idx_114
-caseE :: LispVal -> [LispVal] -> ThrowsError LispVal
-caseE key [] = throwError $ Default "No matching case clauses"
-caseE key (List (Atom "else" : exprs) : otherClauses) = lastExpr exprs
-caseE key (List (List datums : exprs) : otherClauses) = do
-  keyValue <- eval key
-  eqvs <- mapM (\d -> eqv [keyValue, d]) datums
+caseE :: Env -> LispVal -> [LispVal] -> IOThrowsError LispVal
+caseE env key [] = throwError $ Default "No matching case clauses"
+caseE env key (List (Atom "else" : exprs) : otherClauses) = lastExpr env exprs
+caseE env key (List (List datums : exprs) : otherClauses) = do
+  keyValue <- eval env key
+  eqvs <- liftThrows $ mapM (\d -> eqv [keyValue, d]) datums
   if Bool True `elem` eqvs
-    then lastExpr exprs
-    else caseE key otherClauses
-caseE key x = throwError $ TypeMismatch "well formed case clause" (List x)
+    then lastExpr env exprs
+    else caseE env key otherClauses
+caseE env key x = throwError $ TypeMismatch "well formed case clause" (List x)
 
 eqv :: [LispVal] -> ThrowsError LispVal
 eqv [Bool arg1, Bool arg2] = return $ Bool $ arg1 == arg2
@@ -191,5 +197,5 @@ equal [arg1, arg2] = do
   return $ Bool (primitiveEquals || let (Bool x) = eqvEquals in x)
 equal badArgList = throwError $ NumArgs 2 badArgList
 
-lastExpr :: [LispVal] -> ThrowsError LispVal
-lastExpr exprs = last (map eval exprs)
+lastExpr :: Env -> [LispVal] -> IOThrowsError LispVal
+lastExpr env exprs = last (map (eval env) exprs)
