@@ -8,6 +8,8 @@ import Data.Functor ((<&>))
 import Data.IORef
 import Data.Maybe (isJust, isNothing)
 import Debug.Trace (trace)
+import Parser (readExpr, readExprList)
+import System.IO (IOMode (ReadMode, WriteMode), hClose, hGetLine, hPrint, openFile, stdin, stdout)
 import Types
 
 eval :: Env -> LispVal -> IOThrowsError LispVal
@@ -36,6 +38,8 @@ eval env (List (Atom "lambda" : varargs@(Atom _) : body)) =
   makeVarArgs varargs env [] body
 eval env (List (Atom "cond" : clauses)) = cond env clauses
 eval env (List (Atom "case" : key : clauses)) = caseE env key clauses
+eval env (List [Atom "load", String filename]) =
+  load filename >>= fmap last . mapM (eval env)
 eval env (List (function : args)) = do
   func <- eval env function
   argVals <- mapM (eval env) args
@@ -43,6 +47,7 @@ eval env (List (function : args)) = do
 
 apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
 apply (PrimitiveFunc func) args = liftThrows $ func args
+apply (IOFunc func) args = func args
 apply (Func params varargs body closure) args =
   if length params /= length args && isNothing varargs
     then throwError $ NumArgs (toInteger $ length params) args
@@ -59,9 +64,11 @@ apply (Func params varargs body closure) args =
 primitiveBindings :: IO Env
 primitiveBindings = do
   env <- nullEnv
-  bindVars env (map makePrimitiveFunc primitives)
+  let primitiveFuncs = map (makeFunc PrimitiveFunc) primitives
+  let ioFuncs = map (makeFunc IOFunc) ioPrimitives
+  bindVars env (primitiveFuncs ++ ioFuncs)
   where
-    makePrimitiveFunc (var, func) = (var, PrimitiveFunc func)
+    makeFunc constructor (var, func) = (var, constructor func)
 
 primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
 primitives =
@@ -92,6 +99,51 @@ primitives =
     ("eqv?", eqv),
     ("equal?", equal)
   ]
+
+ioPrimitives :: [(String, [LispVal] -> IOThrowsError LispVal)]
+ioPrimitives =
+  [ ("apply", applyProc),
+    ("open-input-file", makePort ReadMode),
+    ("open-output-file", makePort WriteMode),
+    ("close-input-port", closePort),
+    ("close-output-port", closePort),
+    ("read", readProc),
+    ("write", writeProc),
+    ("read-contents", readContents),
+    ("read-all", readAll)
+  ]
+
+applyProc :: [LispVal] -> IOThrowsError LispVal
+applyProc [func, List args] = apply func args
+applyProc (func : args) = apply func args
+
+makePort :: IOMode -> [LispVal] -> IOThrowsError LispVal
+makePort mode [String filename] = liftIO $ do
+  handle <- openFile filename mode
+  return $ Port handle
+
+closePort :: [LispVal] -> IOThrowsError LispVal
+closePort [Port port] = liftIO $ hClose port >> return (Bool True)
+closePort _ = return $ Bool False
+
+readProc :: [LispVal] -> IOThrowsError LispVal
+readProc [] = readProc [Port stdin]
+readProc [Port port] = liftIO (hGetLine port) >>= liftThrows . readExpr
+
+writeProc :: [LispVal] -> IOThrowsError LispVal
+writeProc [obj] = writeProc [obj, Port stdout]
+writeProc [obj, Port port] = liftIO $ hPrint port obj >> return (Bool True)
+
+readContents :: [LispVal] -> IOThrowsError LispVal
+readContents [String filename] = do
+  contents <- liftIO $ readFile filename
+  return $ String contents
+
+readAll :: [LispVal] -> IOThrowsError LispVal
+readAll [String filename] = List <$> load filename
+
+load :: String -> IOThrowsError [LispVal]
+load filename = liftIO (readFile filename) >>= liftThrows . readExprList
 
 numericBinop ::
   (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal

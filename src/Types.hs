@@ -3,6 +3,7 @@ module Types where
 import Control.Monad.Except (ExceptT, MonadError (catchError, throwError), MonadIO (liftIO))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (isJust)
+import System.IO (Handle)
 import Text.Parsec
 
 -- AST
@@ -21,6 +22,8 @@ data LispVal
         body :: [LispVal],
         closure :: Env
       }
+  | IOFunc ([LispVal] -> IOThrowsError LispVal)
+  | Port Handle
 
 instance Eq LispVal where (==) = eqVal
 
@@ -42,6 +45,8 @@ showVal Func {params = args, vararg = varargs, body = body, closure = env} =
            Just arg -> " . " ++ arg
        )
     ++ ") ...)"
+showVal (Port _) = "<IO port>"
+showVal (IOFunc _) = "<IO primitive>"
 
 eqVal :: LispVal -> LispVal -> Bool
 eqVal (String a) (String b) = a == b
@@ -50,6 +55,7 @@ eqVal (Number a) (Number b) = a == b
 eqVal (Bool a) (Bool b) = a == b
 eqVal (List a) (List b) = a == b
 eqVal (DottedList aHead aTail) (DottedList bHead bTail) = aHead == bHead && aTail == bTail
+eqVal (Port a) (Port b) = a == b
 eqVal _ _ = False
 
 makeFunc :: Maybe String -> Env -> [LispVal] -> [LispVal] -> IOThrowsError LispVal

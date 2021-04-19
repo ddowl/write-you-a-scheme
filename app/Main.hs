@@ -11,13 +11,16 @@ import Types
 main :: IO ()
 main = do
   args <- getArgs
-  case length args of
-    0 -> runRepl
-    1 -> runOne $ head args
-    _ -> putStrLn "Program takes only at most 1 argument"
+  if null args
+    then runRepl
+    else runOne args
 
-runOne :: String -> IO ()
-runOne expr = primitiveBindings >>= flip evalAndPrint expr
+runOne :: [String] -> IO ()
+runOne args = do
+  env <- primitiveBindings
+  env <- bindVars env [("args", List $ map String $ drop 1 args)]
+  val <- runIOThrows $ show <$> eval env (List [Atom "load", String (head args)])
+  hPutStrLn stderr val
 
 runRepl :: IO ()
 runRepl = primitiveBindings >>= until_ (== "quit") (readPrompt "Lisp>>> ") . evalAndPrint
