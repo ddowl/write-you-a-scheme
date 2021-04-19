@@ -6,10 +6,8 @@ module Evaluator where
 import Control.Monad.Except
 import Data.Functor ((<&>))
 import Data.IORef
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Debug.Trace (trace)
-import Env
-import Errors
 import Types
 
 eval :: Env -> LispVal -> IOThrowsError LispVal
@@ -26,17 +24,44 @@ eval env (List [Atom "if", pred, conseq, alt]) = do
     r -> throwError $ TypeMismatch "predicates must return boolean" r
 eval env (List [Atom "set!", Atom var, form]) = eval env form >>= setVar env var
 eval env (List [Atom "define", Atom var, form]) = eval env form >>= defineVar env var
+eval env (List (Atom "define" : List (Atom var : params) : body)) =
+  makeNormalFunc env params body >>= defineVar env var
+eval env (List (Atom "define" : DottedList (Atom var : params) varargs : body)) =
+  makeVarArgs varargs env params body >>= defineVar env var
+eval env (List (Atom "lambda" : List params : body)) =
+  makeNormalFunc env params body
+eval env (List (Atom "lambda" : DottedList params varargs : body)) =
+  makeVarArgs varargs env params body
+eval env (List (Atom "lambda" : varargs@(Atom _) : body)) =
+  makeVarArgs varargs env [] body
 eval env (List (Atom "cond" : clauses)) = cond env clauses
 eval env (List (Atom "case" : key : clauses)) = caseE env key clauses
-eval env (List (Atom func : args)) = mapM (eval env) args >>= liftThrows . apply func
-eval env badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
+eval env (List (function : args)) = do
+  func <- eval env function
+  argVals <- mapM (eval env) args
+  apply func argVals
 
-apply :: String -> [LispVal] -> ThrowsError LispVal
-apply func args =
-  maybe
-    (throwError $ NotFunction "Unrecognized primitive function args" func)
-    ($ args)
-    (lookup func primitives)
+apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
+apply (PrimitiveFunc func) args = liftThrows $ func args
+apply (Func params varargs body closure) args =
+  if length params /= length args && isNothing varargs
+    then throwError $ NumArgs (toInteger $ length params) args
+    else do
+      let fnArgs = zip params args
+      fnEnv <- liftIO $ bindVars closure fnArgs
+      fnEnv <- case varargs of
+        Just argName ->
+          let remainingArgs = drop (length params) args
+           in liftIO $ bindVars fnEnv [(argName, List remainingArgs)]
+        Nothing -> return fnEnv
+      last <$> mapM (eval fnEnv) body
+
+primitiveBindings :: IO Env
+primitiveBindings = do
+  env <- nullEnv
+  bindVars env (map makePrimitiveFunc primitives)
+  where
+    makePrimitiveFunc (var, func) = (var, PrimitiveFunc func)
 
 primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
 primitives =
@@ -168,7 +193,7 @@ eqv [Atom arg1, Atom arg2] = return $ Bool $ arg1 == arg2
 eqv
   [DottedList xs x, DottedList ys y] = eqv [List $ xs ++ [x], List $ ys ++ [y]]
 eqv [List arg1, List arg2] =
-  return $ Bool $ (length arg1 == length arg2) && all eqvPair (zip arg1 arg2)
+  return $ Bool $ length arg1 == length arg2 && all eqvPair (zip arg1 arg2)
   where
     eqvPair (x1, x2) = case eqv [x1, x2] of
       Left err -> False

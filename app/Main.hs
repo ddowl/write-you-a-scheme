@@ -2,12 +2,11 @@ module Main where
 
 import Control.Monad (liftM)
 import Control.Monad.Except
-import Env
-import Errors (IOThrowsError, extractValue, liftThrows, trapError)
-import Evaluator (eval)
+import Evaluator (eval, primitiveBindings)
 import Parser (readExpr)
 import System.Environment (getArgs)
 import System.IO
+import Types
 
 main :: IO ()
 main = do
@@ -18,10 +17,10 @@ main = do
     _ -> putStrLn "Program takes only at most 1 argument"
 
 runOne :: String -> IO ()
-runOne expr = nullEnv >>= flip evalAndPrint expr
+runOne expr = primitiveBindings >>= flip evalAndPrint expr
 
 runRepl :: IO ()
-runRepl = nullEnv >>= until_ (== "quit") (readPrompt "Lisp>>> ") . evalAndPrint
+runRepl = primitiveBindings >>= until_ (== "quit") (readPrompt "Lisp>>> ") . evalAndPrint
 
 until_ :: Monad m => (a -> Bool) -> m a -> (a -> m ()) -> m ()
 until_ pred prompt action = do

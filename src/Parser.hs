@@ -6,7 +6,6 @@ where
 
 import Control.Monad (liftM)
 import Control.Monad.Except
-import Errors
 import Numeric (readHex, readOct)
 import System.Environment ()
 import Text.ParserCombinators.Parsec hiding (spaces)
